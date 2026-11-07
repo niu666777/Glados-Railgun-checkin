@@ -707,6 +707,7 @@ def main():
         if not config.cookies_list:
             logger.error(f"{LogEmoji.ERROR} 未找到有效的 Cookie, 退出程序。")
             payload = {"title": "# 未找到 cookies!", "rows": []}
+            exit_code = 1
         else:
             logger.info(f"{LogEmoji.START} 步骤 2: 执行签到")
             checker = Checker(config)
@@ -715,6 +716,17 @@ def main():
             logger.info(f"{LogEmoji.START} 步骤 3: 格式化结果")
             payload = checker.format_results()
             logger.info(f"\n{LogEmoji.END} ========== 签到总结 ==========\n{payload['title']}\n{render_payload(payload)}")
+
+            # 同一个 Cookie 只需在其所属站点成功，不能要求跨站点登录有效。
+            checked_in = {
+                result.cookie_index for result in checker.results
+                if result.code in (CheckinStatus.SUCCESS, CheckinStatus.REPEAT)
+            }
+            failed_count = len(config.cookies_list) - len(checked_in)
+            logger.info(f"账号签到确认: {len(checked_in)}/{len(config.cookies_list)}（包含今日已签到）")
+            if failed_count:
+                logger.error(f"{LogEmoji.ERROR} {failed_count} 个 Cookie 在所有站点均签到失败。")
+                exit_code = 1
 
     except Exception as e:
         logger.error(f"{LogEmoji.ERROR} 主程序执行过程中发生未预期的错误: {e}")
