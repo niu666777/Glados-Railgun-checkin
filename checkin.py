@@ -392,9 +392,11 @@ class API:
                     f"浏览器页面: url={sb.get_current_url()}，title={sb.get_page_title()}",
                     force=True,
                 )
-                try:
-                    sb.wait_for_element("button.ckb", timeout=60)
-                except Exception:
+                for _ in range(60):
+                    if sb.is_element_present("button.ckb"):
+                        break
+                    sb.sleep(1)
+                if not sb.is_element_present("button.ckb"):
                     buttons = sb.execute_script(
                         "return Array.from(document.querySelectorAll('button'))"
                         ".map(function(button) { return button.innerText; });"
@@ -406,7 +408,7 @@ class API:
                         f"title={sb.get_page_title()}，buttons={buttons[:10]}",
                         force=True,
                     )
-                    raise
+                    return None
 
                 if "is-done" in (sb.get_attribute("button.ckb", "class") or ""):
                     self._log("info", LogEmoji.REPEAT, "浏览器页面显示今日已签到", force=True)
