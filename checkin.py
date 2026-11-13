@@ -312,7 +312,7 @@ class API:
         """获取签到数据"""
         return {"token": self.domain}
 
-    def _get_checkin_challenge(self, cookies: str, user_agent: str) -> Optional[Tuple[str, str]]:
+    def _get_checkin_challenge(self, cookies: str, user_agent: str) -> Optional[Tuple[str, str, Optional[str]]]:
         """获取网页端要求的签到 challenge 并计算 proof"""
         url = self._get_full_url(APIEndpoint.CHECKIN_CHALLENGE.value)
         response = self._make_request(url, "GET", cookies=cookies, user_agent=user_agent)
@@ -328,12 +328,88 @@ class API:
             return None
 
         nonce = str(data["nonce"])
-        if data.get("turnstile"):
+        turnstile = data.get("turnstile")
+        if turnstile:
             self._log("warning", LogEmoji.WARNING, "签到 challenge 要求 Cloudflare Turnstile 验证", force=True)
         time.sleep(CHALLENGE_DELAY_SECONDS)
         proof = hashlib.sha256(f"{nonce}.{CHALLENGE_SUFFIX}".encode()).hexdigest()
         self._log("info", LogEmoji.CHECKIN, "已获取签到 challenge", force=True)
-        return nonce, proof
+        return nonce, proof, str(turnstile) if turnstile else None
+
+    def _browser_checkin(self, cookies: str, user_agent: str) -> Optional[Dict]:
+        """Turnstile 启用时，用真实浏览器执行官方签到页面。"""
+        try:
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self._log("error", LogEmoji.ERROR, "需要 Playwright 才能完成 Turnstile 验证，请先安装依赖", force=True)
+            return None
+
+        browser_cookies = []
+        for item in cookies.split(";"):
+            name, separator, value = item.strip().partition("=")
+            if separator and name:
+                browser_cookies.append({
+                    "name": name,
+                    "value": value,
+                    "domain": f".{self.domain}",
+                    "path": "/",
+                    "secure": True,
+                    "sameSite": "Lax",
+                })
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=False,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            )
+            context = browser.new_context(
+                user_agent=user_agent,
+                locale="zh-CN",
+                timezone_id="Asia/Shanghai",
+                viewport={"width": 1440, "height": 900},
+            )
+            context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
+            context.add_cookies(browser_cookies)
+            page = context.new_page()
+
+            try:
+                page.goto(
+                    self._get_full_url("/console/checkin"),
+                    wait_until="domcontentloaded",
+                    timeout=60000,
+                )
+                button = page.locator("button.ckb")
+                button.wait_for(state="visible", timeout=60000)
+                if button.is_disabled():
+                    self._log("info", LogEmoji.REPEAT, "浏览器页面显示今日已签到", force=True)
+                    return {"code": CheckinStatus.REPEAT.value, "message": "already checked in"}
+
+                page.wait_for_timeout(5000)
+                with page.expect_response(
+                    lambda response: (
+                        response.request.method == "POST"
+                        and response.url.endswith(APIEndpoint.CHECKIN.value)
+                    ),
+                    timeout=120000,
+                ) as response_info:
+                    button.click()
+                return response_info.value.json()
+            except PlaywrightTimeoutError as e:
+                self._log("error", LogEmoji.ERROR, f"浏览器签到等待超时: {e}", force=True)
+                return None
+            except Exception as e:
+                self._log("error", LogEmoji.ERROR, f"浏览器签到失败: {e}", force=True)
+                return None
+            finally:
+                context.close()
+                browser.close()
 
     @log_method
     def checkin(self, cookies: str) -> Dict[str, Union[str, CheckinStatus]]:
@@ -361,7 +437,10 @@ class API:
         payload = dict(data)
         challenge = self._get_checkin_challenge(cookies, user_agent)
         if challenge:
-            payload["nonce"], payload["proof"] = challenge
+            nonce, proof, turnstile = challenge
+            if turnstile:
+                return self._browser_checkin(cookies, user_agent)
+            payload["nonce"], payload["proof"] = nonce, proof
 
         response = self._make_request(
             url,

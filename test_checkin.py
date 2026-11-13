@@ -86,6 +86,23 @@ class ChallengeProtocolTests(unittest.TestCase):
             "proof": "2e90cfbbf1b6f4d87b081dd79321f6862ce689d56ae55582d82314a857192052",
         })
 
+    def test_turnstile_challenge_uses_browser_checkin(self):
+        api = checkin.API("glados.cloud")
+        with patch.object(
+            api,
+            "_get_checkin_challenge",
+            return_value=("nonce-123", "proof", "turnstile-sitekey"),
+        ), patch.object(
+            api,
+            "_browser_checkin",
+            return_value={"code": 0, "points": 20, "message": "checkin success"},
+        ) as browser_checkin:
+            result = api.checkin("test-cookie")
+        api.close()
+
+        self.assertEqual(result["code"], checkin.CheckinStatus.SUCCESS)
+        browser_checkin.assert_called_once_with("test-cookie", checkin.PLATFORM_UA["Windows"])
+
 
 if __name__ == "__main__":
     unittest.main()
