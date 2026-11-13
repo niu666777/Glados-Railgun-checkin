@@ -392,7 +392,10 @@ class API:
                     f"浏览器页面: url={sb.get_current_url()}，title={sb.get_page_title()}",
                     force=True,
                 )
+                sb.sleep(10)
                 button_state = None
+                stable_state = None
+                stable_count = 0
                 for _ in range(60):
                     button_state = sb.execute_script(
                         "const button = document.querySelector('button.ckb');"
@@ -403,9 +406,17 @@ class API:
                         "} : null;"
                     )
                     if button_state and button_state.get("text", "").strip():
-                        break
+                        if button_state == stable_state:
+                            stable_count += 1
+                        else:
+                            stable_state = button_state
+                            stable_count = 1
+                        if stable_count >= 3:
+                            break
+                    else:
+                        stable_count = 0
                     sb.sleep(1)
-                if not button_state:
+                if stable_count < 3:
                     buttons = sb.execute_script(
                         "return Array.from(document.querySelectorAll('button'))"
                         ".map(function(button) { return button.innerText; });"
