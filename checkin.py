@@ -360,6 +360,7 @@ class API:
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
+                channel="chrome",
                 headless=False,
                 args=[
                     "--no-sandbox",
@@ -367,8 +368,12 @@ class API:
                     "--disable-blink-features=AutomationControlled",
                 ],
             )
+            major_version = browser.version.split(".")[0]
+            browser_user_agent = user_agent.replace(
+                "Chrome/120.0.0.0", f"Chrome/{major_version}.0.0.0"
+            )
             context = browser.new_context(
-                user_agent=user_agent,
+                user_agent=browser_user_agent,
                 locale="zh-CN",
                 timezone_id="Asia/Shanghai",
                 viewport={"width": 1440, "height": 900},
@@ -400,7 +405,17 @@ class API:
                     timeout=120000,
                 ) as response_info:
                     button.click()
-                return response_info.value.json()
+                response_data = response_info.value.json()
+                request_data = response_info.value.request.post_data_json or {}
+                self._log(
+                    "info",
+                    LogEmoji.INFO,
+                    "浏览器提交字段: "
+                    f"{sorted(request_data)}，tsState={request_data.get('tsState')}，"
+                    f"turnstile={'turnstile' in request_data}",
+                    force=True,
+                )
+                return response_data
             except PlaywrightTimeoutError as e:
                 self._log("error", LogEmoji.ERROR, f"浏览器签到等待超时: {e}", force=True)
                 return None
