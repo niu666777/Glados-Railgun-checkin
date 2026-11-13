@@ -458,6 +458,7 @@ class API:
                     sb.driver.uc_gui_click_cf(retry=True)
                 except Exception:
                     pass
+                sb.driver.switch_to.default_content()
                 sb.uc_click("button.ckb", reconnect_time=4)
 
                 for _ in range(120):
