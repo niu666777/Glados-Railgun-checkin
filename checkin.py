@@ -341,7 +341,6 @@ class API:
         """Turnstile 启用时，用真实浏览器执行官方签到页面。"""
         try:
             from seleniumbase import SB
-            from selenium.webdriver.common.by import By
         except ImportError:
             self._log("error", LogEmoji.ERROR, "需要 SeleniumBase 才能完成 Turnstile 验证，请先安装依赖", force=True)
             return None
@@ -393,11 +392,20 @@ class API:
                     f"浏览器页面: url={sb.get_current_url()}，title={sb.get_page_title()}",
                     force=True,
                 )
+                button_state = None
                 for _ in range(60):
-                    if sb.driver.find_elements(By.CSS_SELECTOR, "button.ckb"):
+                    button_state = sb.execute_script(
+                        "const button = document.querySelector('button.ckb');"
+                        "return button ? {"
+                        "className: button.className,"
+                        "text: button.innerText,"
+                        "disabled: button.disabled"
+                        "} : null;"
+                    )
+                    if button_state and button_state.get("text", "").strip():
                         break
                     sb.sleep(1)
-                if not sb.driver.find_elements(By.CSS_SELECTOR, "button.ckb"):
+                if not button_state:
                     buttons = sb.execute_script(
                         "return Array.from(document.querySelectorAll('button'))"
                         ".map(function(button) { return button.innerText; });"
@@ -411,7 +419,7 @@ class API:
                     )
                     return None
 
-                if "is-done" in (sb.get_attribute("button.ckb", "class") or ""):
+                if "is-done" in button_state.get("className", ""):
                     self._log("info", LogEmoji.REPEAT, "浏览器页面显示今日已签到", force=True)
                     return {"code": CheckinStatus.REPEAT.value, "message": "already checked in"}
 
