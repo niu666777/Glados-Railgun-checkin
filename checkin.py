@@ -386,6 +386,12 @@ class API:
                 sb.uc_open_with_reconnect(self._get_full_url("/"), reconnect_time=4)
                 sb.add_cookies(browser_cookies)
                 sb.uc_open_with_reconnect(self._get_full_url("/console/checkin"), reconnect_time=4)
+                self._log(
+                    "info",
+                    LogEmoji.INFO,
+                    f"浏览器页面: url={sb.get_current_url()}，title={sb.get_page_title()}",
+                    force=True,
+                )
                 try:
                     sb.wait_for_element("button.ckb", timeout=60)
                 except Exception:
