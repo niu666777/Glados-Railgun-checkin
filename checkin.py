@@ -341,6 +341,7 @@ class API:
         """Turnstile 启用时，用真实浏览器执行官方签到页面。"""
         try:
             from seleniumbase import SB
+            from selenium.webdriver.common.by import By
         except ImportError:
             self._log("error", LogEmoji.ERROR, "需要 SeleniumBase 才能完成 Turnstile 验证，请先安装依赖", force=True)
             return None
@@ -393,10 +394,10 @@ class API:
                     force=True,
                 )
                 for _ in range(60):
-                    if sb.is_element_present("button.ckb"):
+                    if sb.driver.find_elements(By.CSS_SELECTOR, "button.ckb"):
                         break
                     sb.sleep(1)
-                if not sb.is_element_present("button.ckb"):
+                if not sb.driver.find_elements(By.CSS_SELECTOR, "button.ckb"):
                     buttons = sb.execute_script(
                         "return Array.from(document.querySelectorAll('button'))"
                         ".map(function(button) { return button.innerText; });"
