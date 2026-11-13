@@ -41,7 +41,7 @@ class APIEndpoint(Enum):
 
 
 CHALLENGE_SUFFIX = "glados-observe-v1"
-CHALLENGE_DELAY_SECONDS = 2.5
+CHALLENGE_DELAY_SECONDS = 2.7
 
 
 class LogEmoji:
@@ -328,6 +328,8 @@ class API:
             return None
 
         nonce = str(data["nonce"])
+        if data.get("turnstile"):
+            self._log("warning", LogEmoji.WARNING, "签到 challenge 要求 Cloudflare Turnstile 验证", force=True)
         time.sleep(CHALLENGE_DELAY_SECONDS)
         proof = hashlib.sha256(f"{nonce}.{CHALLENGE_SUFFIX}".encode()).hexdigest()
         self._log("info", LogEmoji.CHECKIN, "已获取签到 challenge", force=True)

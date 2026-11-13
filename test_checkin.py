@@ -77,7 +77,7 @@ class ChallengeProtocolTests(unittest.TestCase):
                 result = api.checkin("test-cookie")
 
         self.assertEqual(result["code"], checkin.CheckinStatus.SUCCESS)
-        self.assertEqual(sleep.call_args.args, (2.5,))
+        self.assertEqual(sleep.call_args.args, (2.7,))
         self.assertEqual(calls[0][0:2], ("GET", "https://glados.cloud/api/user/checkin/challenge"))
         self.assertEqual(calls[1][0:2], ("POST", "https://glados.cloud/api/user/checkin"))
         self.assertEqual(calls[1][2]["json"], {
