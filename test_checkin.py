@@ -55,5 +55,37 @@ class ExitStatusTests(unittest.TestCase):
                 self.assertEqual(self.run_checkin(cookies, responses), expected)
 
 
+class ChallengeProtocolTests(unittest.TestCase):
+    def test_checkin_fetches_challenge_and_submits_proof_as_json(self):
+        calls = []
+
+        def request(session, method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            if method == "GET":
+                body = {"code": 0, "nonce": "nonce-123"}
+            else:
+                body = {"code": 0, "points": 20, "message": "checkin success"}
+            response = requests.Response()
+            response.status_code = 200
+            response._content = json.dumps(body).encode()
+            return response
+
+        with patch.object(requests.Session, "request", request), \
+             patch.object(checkin.time, "sleep") as sleep, \
+             patch.object(checkin.logger, "disabled", True):
+            with checkin.API("glados.cloud") as api:
+                result = api.checkin("test-cookie")
+
+        self.assertEqual(result["code"], checkin.CheckinStatus.SUCCESS)
+        self.assertEqual(sleep.call_args.args, (2.5,))
+        self.assertEqual(calls[0][0:2], ("GET", "https://glados.cloud/api/user/checkin/challenge"))
+        self.assertEqual(calls[1][0:2], ("POST", "https://glados.cloud/api/user/checkin"))
+        self.assertEqual(calls[1][2]["json"], {
+            "token": "glados.cloud",
+            "nonce": "nonce-123",
+            "proof": "2e90cfbbf1b6f4d87b081dd79321f6862ce689d56ae55582d82314a857192052",
+        })
+
+
 if __name__ == "__main__":
     unittest.main()

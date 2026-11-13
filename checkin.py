@@ -1,5 +1,7 @@
+import hashlib
 import os
 import sys
+import time
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
@@ -32,9 +34,14 @@ class APIEndpoint(Enum):
     """API端点"""
 
     CHECKIN = "/api/user/checkin"
+    CHECKIN_CHALLENGE = "/api/user/checkin/challenge"
     STATUS = "/api/user/status"
     POINTS = "/api/user/points"
     EXCHANGE = "/api/user/exchange"
+
+
+CHALLENGE_SUFFIX = "glados-observe-v1"
+CHALLENGE_DELAY_SECONDS = 2.5
 
 
 class LogEmoji:
@@ -266,7 +273,15 @@ class API:
         """获取完整 URL"""
         return f"https://{self.domain}{path}"
 
-    def _make_request(self, url: str, method: str, data: Optional[Dict] = None, cookies: str = "", user_agent: Optional[str] = None) -> Optional[requests.Response]:
+    def _make_request(
+        self,
+        url: str,
+        method: str,
+        data: Optional[Dict] = None,
+        cookies: str = "",
+        user_agent: Optional[str] = None,
+        json_body: bool = False,
+    ) -> Optional[requests.Response]:
         """发送 HTTP 请求"""
         session_headers = self.headers.copy()
         if user_agent:
@@ -275,7 +290,10 @@ class API:
 
         try:
             if method.upper() == "POST":
-                response = self.session.post(url, headers=session_headers, data=data, timeout=(60, 120))
+                if json_body:
+                    response = self.session.post(url, headers=session_headers, json=data, timeout=(60, 120))
+                else:
+                    response = self.session.post(url, headers=session_headers, data=data, timeout=(60, 120))
             elif method.upper() == "GET":
                 response = self.session.get(url, headers=session_headers, timeout=(60, 120))
             else:
@@ -293,6 +311,27 @@ class API:
     def _get_checkin_data(self) -> Dict[str, str]:
         """获取签到数据"""
         return {"token": self.domain}
+
+    def _get_checkin_challenge(self, cookies: str, user_agent: str) -> Optional[Tuple[str, str]]:
+        """获取网页端要求的签到 challenge 并计算 proof"""
+        url = self._get_full_url(APIEndpoint.CHECKIN_CHALLENGE.value)
+        response = self._make_request(url, "GET", cookies=cookies, user_agent=user_agent)
+        if response is None:
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            self._log("warning", LogEmoji.WARNING, "签到 challenge 响应解析失败，按旧协议提交", force=True)
+            return None
+        if not isinstance(data, dict) or data.get("code") != 0 or not data.get("nonce"):
+            self._log("warning", LogEmoji.WARNING, f"签到 challenge 响应异常: {data}，按旧协议提交", force=True)
+            return None
+
+        nonce = str(data["nonce"])
+        time.sleep(CHALLENGE_DELAY_SECONDS)
+        proof = hashlib.sha256(f"{nonce}.{CHALLENGE_SUFFIX}".encode()).hexdigest()
+        self._log("info", LogEmoji.CHECKIN, "已获取签到 challenge", force=True)
+        return nonce, proof
 
     @log_method
     def checkin(self, cookies: str) -> Dict[str, Union[str, CheckinStatus]]:
@@ -317,7 +356,19 @@ class API:
 
     def _checkin_attempt(self, url: str, data: Dict, cookies: str, user_agent: str) -> Optional[Dict]:
         """发起一次签到请求并返回解析后的响应体（失败返回 None）"""
-        response = self._make_request(url, "POST", data, cookies, user_agent=user_agent)
+        payload = dict(data)
+        challenge = self._get_checkin_challenge(cookies, user_agent)
+        if challenge:
+            payload["nonce"], payload["proof"] = challenge
+
+        response = self._make_request(
+            url,
+            "POST",
+            payload,
+            cookies,
+            user_agent=user_agent,
+            json_body=bool(challenge),
+        )
         if not response:
             return None
         try:
