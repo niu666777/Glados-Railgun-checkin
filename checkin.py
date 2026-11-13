@@ -386,7 +386,21 @@ class API:
                 sb.uc_open_with_reconnect(self._get_full_url("/"), reconnect_time=4)
                 sb.add_cookies(browser_cookies)
                 sb.uc_open_with_reconnect(self._get_full_url("/console/checkin"), reconnect_time=4)
-                sb.wait_for_element("button.ckb", timeout=60)
+                try:
+                    sb.wait_for_element("button.ckb", timeout=60)
+                except Exception:
+                    buttons = sb.execute_script(
+                        "return Array.from(document.querySelectorAll('button'))"
+                        ".map(function(button) { return button.innerText; });"
+                    )
+                    self._log(
+                        "error",
+                        LogEmoji.ERROR,
+                        f"签到页未加载: url={sb.get_current_url()}，"
+                        f"title={sb.get_page_title()}，buttons={buttons[:10]}",
+                        force=True,
+                    )
+                    raise
 
                 if "is-done" in (sb.get_attribute("button.ckb", "class") or ""):
                     self._log("info", LogEmoji.REPEAT, "浏览器页面显示今日已签到", force=True)
