@@ -454,11 +454,7 @@ class API:
                     """
                 )
                 sb.sleep(5)
-                try:
-                    sb.driver.uc_gui_click_cf(retry=True)
-                except Exception:
-                    pass
-                sb.driver.switch_to.default_content()
+                self._log("info", LogEmoji.CHECKIN, "浏览器开始执行签到", force=True)
                 sb.uc_click("button.ckb", reconnect_time=4)
 
                 for _ in range(120):
