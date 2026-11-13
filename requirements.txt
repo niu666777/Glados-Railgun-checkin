@@ -2,4 +2,4 @@
 requests
 pypushdeer
 serverchan-sdk
-playwright>=1.50,<2
+seleniumbase>=4.40,<5

@@ -1,5 +1,6 @@
 import hashlib
 import os
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -339,10 +340,9 @@ class API:
     def _browser_checkin(self, cookies: str, user_agent: str) -> Optional[Dict]:
         """Turnstile 启用时，用真实浏览器执行官方签到页面。"""
         try:
-            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-            from playwright.sync_api import sync_playwright
+            from seleniumbase import SB
         except ImportError:
-            self._log("error", LogEmoji.ERROR, "需要 Playwright 才能完成 Turnstile 验证，请先安装依赖", force=True)
+            self._log("error", LogEmoji.ERROR, "需要 SeleniumBase 才能完成 Turnstile 验证，请先安装依赖", force=True)
             return None
 
         browser_cookies = []
@@ -352,79 +352,84 @@ class API:
                 browser_cookies.append({
                     "name": name,
                     "value": value,
-                    "domain": f".{self.domain}",
                     "path": "/",
                     "secure": True,
                     "sameSite": "Lax",
                 })
 
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
-                channel="chrome",
-                headless=False,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled",
-                ],
-            )
-            major_version = browser.version.split(".")[0]
+        try:
+            major_version = "120"
+            for executable in ("google-chrome", "google-chrome-stable", "chromium"):
+                try:
+                    output = subprocess.check_output(
+                        [executable, "--version"],
+                        text=True,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                    )
+                    major_version = output.strip().split()[-1].split(".")[0]
+                    break
+                except (OSError, subprocess.SubprocessError):
+                    continue
             browser_user_agent = user_agent.replace(
                 "Chrome/120.0.0.0", f"Chrome/{major_version}.0.0.0"
             )
-            context = browser.new_context(
-                user_agent=browser_user_agent,
-                locale="zh-CN",
-                timezone_id="Asia/Shanghai",
-                viewport={"width": 1440, "height": 900},
-            )
-            context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-            )
-            context.add_cookies(browser_cookies)
-            page = context.new_page()
 
-            try:
-                page.goto(
-                    self._get_full_url("/console/checkin"),
-                    wait_until="domcontentloaded",
-                    timeout=60000,
-                )
-                button = page.locator("button.ckb")
-                button.wait_for(state="visible", timeout=60000)
-                if button.is_disabled():
+            with SB(
+                uc=True,
+                incognito=True,
+                headless=False,
+                xvfb=True,
+                locale="zh-CN",
+                agent=browser_user_agent,
+            ) as sb:
+                sb.uc_open_with_reconnect(self._get_full_url("/"), reconnect_time=4)
+                sb.add_cookies(browser_cookies)
+                sb.uc_open_with_reconnect(self._get_full_url("/console/checkin"), reconnect_time=4)
+                sb.wait_for_element("button.ckb", timeout=60)
+
+                if "is-done" in (sb.get_attribute("button.ckb", "class") or ""):
                     self._log("info", LogEmoji.REPEAT, "浏览器页面显示今日已签到", force=True)
                     return {"code": CheckinStatus.REPEAT.value, "message": "already checked in"}
 
-                page.wait_for_timeout(5000)
-                with page.expect_response(
-                    lambda response: (
-                        response.request.method == "POST"
-                        and response.url.endswith(APIEndpoint.CHECKIN.value)
-                    ),
-                    timeout=120000,
-                ) as response_info:
-                    button.click()
-                response_data = response_info.value.json()
-                request_data = response_info.value.request.post_data_json or {}
-                self._log(
-                    "info",
-                    LogEmoji.INFO,
-                    "浏览器提交字段: "
-                    f"{sorted(request_data)}，tsState={request_data.get('tsState')}，"
-                    f"turnstile={'turnstile' in request_data}",
-                    force=True,
+                sb.execute_script(
+                    """
+                    window.__gladosCheckinResponse = null;
+                    const originalOpen = XMLHttpRequest.prototype.open;
+                    const originalSend = XMLHttpRequest.prototype.send;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                        this.__gladosUrl = url;
+                        return originalOpen.apply(this, arguments);
+                    };
+                    XMLHttpRequest.prototype.send = function() {
+                        if (this.__gladosUrl && this.__gladosUrl.includes('/user/checkin')) {
+                            this.addEventListener('load', () => {
+                                window.__gladosCheckinResponse = this.responseText;
+                            });
+                        }
+                        return originalSend.apply(this, arguments);
+                    };
+                    """
                 )
-                return response_data
-            except PlaywrightTimeoutError as e:
-                self._log("error", LogEmoji.ERROR, f"浏览器签到等待超时: {e}", force=True)
+                sb.sleep(5)
+                try:
+                    sb.driver.uc_gui_click_cf(retry=True)
+                except Exception:
+                    pass
+                sb.uc_click("button.ckb", reconnect_time=4)
+
+                for _ in range(120):
+                    response_text = sb.execute_script(
+                        "return window.__gladosCheckinResponse;"
+                    )
+                    if response_text:
+                        return json.loads(response_text)
+                    sb.sleep(1)
+                self._log("error", LogEmoji.ERROR, "浏览器签到等待响应超时", force=True)
                 return None
-            except Exception as e:
-                self._log("error", LogEmoji.ERROR, f"浏览器签到失败: {e}", force=True)
-                return None
-            finally:
-                context.close()
-                browser.close()
+        except Exception as e:
+            self._log("error", LogEmoji.ERROR, f"浏览器签到失败: {e}", force=True)
+            return None
 
     @log_method
     def checkin(self, cookies: str) -> Dict[str, Union[str, CheckinStatus]]:
